@@ -3717,6 +3717,284 @@ def generate_custom_mowing_pattern(area_complexity: float, obstacle_density: flo
         )
 ```
 
+### Mowing Pattern Architecture and Extensibility
+
+Understanding the robot's path planning architecture is crucial for developers wanting to implement custom mowing patterns beyond the standard grid, border, and zigzag patterns.
+
+#### Path Planning Architecture
+
+**Client-Side Route Generation:**
+The PyMammotion library follows a **hybrid path planning architecture** where high-level route planning occurs on the client side (your application), while low-level navigation and execution happens on the robot:
+
+```python
+# 1. Client-side pattern generation and route planning
+route_config = GenerateRouteInformation(
+    one_hashs=[zone_hash_1, zone_hash_2],    # Target zones
+    job_mode=CuttingMode.single_grid,        # Pattern type
+    channel_width=25,                        # Path spacing
+    toward=45,                               # Primary direction
+    toward_mode=PathAngleSetting.absolute_angle
+)
+
+# 2. Route calculation and transmission to robot
+generate_route_information(route_config)     # Sends NavReqCoverPath message
+
+# 3. Robot responds with calculated path data
+# Robot sends back NavUploadZigZagResult with actual waypoints
+
+# 4. Path execution begins on robot
+start_job()  # Robot executes the pre-calculated path
+```
+
+**Protocol Message Flow:**
+1. **Route Request** (`NavReqCoverPath`): Client sends pattern parameters
+2. **Path Calculation**: Robot's onboard computer calculates specific waypoints
+3. **Path Upload** (`NavUploadZigZagResult`): Robot returns calculated path segments
+4. **Execution Control** (`NavTaskCtrl`): Client controls start/stop/pause of execution
+
+#### Current Pattern Limitations and Extensions
+
+**Built-in Pattern Types** (from `CuttingMode` enum):
+```python
+class CuttingMode(IntEnum):
+    single_grid = 0      # Single-pass parallel lines
+    double_grid = 1      # Overlapping parallel passes  
+    segment_grid = 2     # Segmented coverage areas
+    no_grid = 3         # Perimeter-only cutting
+```
+
+**Can Additional Patterns (like Spiral) be Added?**
+
+**Short Answer**: Yes, but with significant limitations and requirements.
+
+**Technical Feasibility Analysis:**
+
+✅ **Possible through Custom Waypoint Generation**:
+```python
+def generate_spiral_pattern(center_x: float, center_y: float, 
+                          max_radius: float, spacing: float) -> list:
+    """Generate spiral pattern waypoints for transmission to robot."""
+    waypoints = []
+    angle = 0
+    radius = spacing
+    
+    while radius <= max_radius:
+        x = center_x + radius * math.cos(angle)
+        y = center_y + radius * math.sin(angle)
+        waypoints.append((x, y))
+        
+        # Increment for spiral progression
+        angle += 0.1  # Angle step
+        radius += spacing / (2 * math.pi / 0.1)  # Radius increase
+    
+    return waypoints
+
+def implement_custom_spiral_mowing(zone_hash: int):
+    """Example implementation of spiral mowing pattern."""
+    
+    # 1. Use no_grid mode to disable built-in patterns
+    route_config = GenerateRouteInformation(
+        one_hashs=[zone_hash],
+        job_mode=CuttingMode.no_grid,       # Disable standard patterns
+        edge_mode=BorderPatrolMode.none,     # Skip border cutting
+        channel_width=15,                    # Tight spacing for spiral
+        speed=0.2                           # Slower speed for precision
+    )
+    
+    # 2. Generate and send custom route
+    generate_route_information(route_config)
+    
+    # 3. Could potentially use manual position control
+    # for fine-grained spiral execution (advanced technique)
+```
+
+❌ **Limitations and Challenges**:
+
+1. **Firmware Pattern Recognition**: The robot's firmware has built-in pattern types. Adding truly new patterns requires:
+   - Custom waypoint calculation on client side
+   - Using `no_grid` mode and manual navigation commands
+   - Potentially slower execution due to constant communication overhead
+
+2. **Protocol Buffer Constraints**: The `CuttingMode` enum is hardcoded in protocol buffers:
+```protobuf
+// From mctrl_nav.proto - NavReqCoverPath message
+int32 jobMode = 4;  // Limited to predefined values (0-3)
+```
+
+3. **Onboard Navigation Intelligence**: The robot optimizes built-in patterns for efficiency. Custom patterns may:
+   - Require more frequent position updates
+   - Have reduced obstacle avoidance capabilities  
+   - Experience slower execution speeds
+
+**Advanced Pattern Implementation Strategies:**
+
+**Strategy 1: Hybrid Approach (Recommended)**
+```python
+def advanced_spiral_hybrid_pattern(zone_data: ZoneInfo):
+    """Implement spiral using combination of built-in patterns and custom control."""
+    
+    # Use standard patterns for bulk coverage
+    route_config = GenerateRouteInformation(
+        job_mode=CuttingMode.segment_grid,
+        channel_width=30,                    # Wider for main coverage
+        toward_mode=PathAngleSetting.random_angle
+    )
+    
+    # Generate route for main area
+    generate_route_information(route_config)
+    start_job()
+    
+    # Monitor progress and add custom spiral for finishing touches
+    # (Implementation would require real-time position monitoring)
+```
+
+**Strategy 2: Zone Subdivision**
+```python
+def spiral_via_zone_subdivision(large_zone_hash: int):
+    """Create spiral effect by dividing area into concentric zones."""
+    
+    # Create multiple concentric boundary zones
+    # Process from outside to inside for spiral effect
+    concentric_zones = create_concentric_boundaries(large_zone_hash)
+    
+    for i, zone_hash in enumerate(reversed(concentric_zones)):
+        route_config = GenerateRouteInformation(
+            one_hashs=[zone_hash],
+            job_mode=CuttingMode.single_grid,
+            toward=i * 45,  # Rotate angle for each ring
+            toward_mode=PathAngleSetting.absolute_angle
+        )
+        
+        generate_route_information(route_config)
+        start_job()
+        # Wait for completion before next zone
+```
+
+#### Custom Path Planning Capabilities
+
+**Available Route Control Parameters:**
+```python
+class GenerateRouteInformation:
+    # Zone selection
+    one_hashs: list[int]           # Target work areas
+    
+    # Pattern configuration  
+    job_mode: int                  # Primary cutting pattern (0-3)
+    channel_mode: int              # Line generation mode
+    channel_width: int             # Path spacing (15-50mm typical)
+    
+    # Direction control
+    toward: int                    # Path angle (0-359 degrees)
+    toward_included_angle: int     # Angle variance for randomization
+    toward_mode: int               # Angle calculation method
+    
+    # Execution parameters
+    path_order: str                # Border-first vs grid-first
+    edge_mode: int                 # Border lap count (0-4)
+    obstacle_laps: int             # Obstacle cutting passes (0-4)
+    
+    # Performance settings
+    speed: float                   # Movement speed (0.1-0.6)
+    blade_height: int              # Cutting height (20-70mm)
+    ultra_wave: int                # Obstacle detection sensitivity
+```
+
+**Advanced Route Customization:**
+```python
+def create_optimized_coverage_pattern(area_analysis: AreaCharacteristics):
+    """Generate highly customized mowing pattern based on area analysis."""
+    
+    # Analyze area characteristics
+    obstacle_density = area_analysis.obstacle_count / area_analysis.total_area
+    grass_growth_rate = area_analysis.average_growth_rate
+    terrain_complexity = area_analysis.slope_variance
+    
+    # Dynamic pattern selection
+    if terrain_complexity > 0.8:  # Steep or complex terrain
+        return GenerateRouteInformation(
+            job_mode=CuttingMode.no_grid,          # Perimeter only for safety
+            edge_mode=BorderPatrolMode.three,      # Multiple careful passes
+            speed=0.15,                            # Very slow for precision
+            ultra_wave=DetectionStrategy.sensitive # High sensitivity
+        )
+    
+    elif obstacle_density > 0.6:  # High obstacle density
+        return GenerateRouteInformation(
+            job_mode=CuttingMode.segment_grid,     # Segmented approach
+            channel_width=20,                      # Narrow paths
+            obstacle_laps=ObstacleLapsMode.two,    # Extra obstacle attention
+            toward_mode=PathAngleSetting.random_angle  # Vary approach angles
+        )
+    
+    elif grass_growth_rate > 0.7:  # Fast-growing grass
+        return GenerateRouteInformation(
+            job_mode=CuttingMode.double_grid,      # Thorough coverage
+            channel_width=25,                      # Standard spacing
+            speed=0.25,                            # Moderate speed
+            blade_height=35,                       # Medium cut height
+            edge_mode=BorderPatrolMode.one         # Clean edges
+        )
+    
+    else:  # Standard conditions
+        return GenerateRouteInformation(
+            job_mode=CuttingMode.single_grid,      # Efficient single pass
+            channel_width=30,                      # Wide paths
+            speed=0.4,                             # Faster operation
+            toward_mode=PathAngleSetting.absolute_angle
+        )
+```
+
+#### Real-Time Path Modification
+
+**Breakpoint Navigation for Custom Patterns:**
+```python
+def implement_custom_navigation_sequence():
+    """Use breakpoint navigation for precise custom path control."""
+    
+    # Start with standard pattern
+    generate_route_information(base_config)
+    start_job()
+    
+    # Monitor position and inject custom navigation
+    while job_active():
+        current_pos = get_current_position()
+        
+        if custom_pattern_trigger(current_pos):
+            pause_execute_task()  # Pause current job
+            
+            # Execute custom navigation sequence
+            execute_custom_waypoint_sequence(custom_waypoints)
+            
+            break_point_continue()  # Resume original pattern
+```
+
+**Manual Position Control Integration:**
+```python
+def precise_spiral_execution(center_x: float, center_y: float):
+    """Execute precise spiral using manual movement commands."""
+    
+    # Disable automatic patterns
+    route_config = GenerateRouteInformation(job_mode=CuttingMode.no_grid)
+    generate_route_information(route_config)
+    
+    # Execute spiral via manual control
+    spiral_points = generate_spiral_waypoints(center_x, center_y)
+    
+    for point in spiral_points:
+        # Calculate movement vector to next point
+        current_pos = get_current_position()
+        movement_vector = calculate_movement_vector(current_pos, point)
+        
+        # Send movement command
+        send_movement(
+            linear_speed=int(movement_vector.linear * 100),
+            angular_speed=int(movement_vector.angular * 100)
+        )
+        
+        # Wait for position achievement
+        wait_for_position_reached(point, tolerance=0.5)
+```
+
 ### Integration with External Systems
 
 #### Home Assistant Advanced Automations
