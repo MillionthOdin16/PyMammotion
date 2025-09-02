@@ -286,6 +286,650 @@ MammotionCommand
    - Performance benchmarking tools
    - Automated regression testing
 
+---
+
+# Developer Extension Guide
+
+## Core Architecture Deep Dive
+
+### Communication Layer Architecture
+
+The PyMammotion library implements a sophisticated three-tier communication system that developers can extend and customize:
+
+#### 1. Bluetooth Low Energy (BLE) Layer
+```python
+# Location: pymammotion/bluetooth/ble.py
+class MammotionBLE:
+    """Direct device communication via BLE GATT characteristics"""
+    
+    # Key extension points:
+    - CHARACTERISTIC_NOTIFY = "00001234-0000-1000-8000-00805f9b34fb"
+    - CHARACTERISTIC_WRITE = "00001235-0000-1000-8000-00805f9b34fb" 
+    - SERVICE_UUID = "00001234-0000-1000-8000-00805f9b34fb"
+    
+    async def send_command_direct(self, msg: LubaMsg) -> bytes:
+        """Send protobuf command directly to device"""
+        # Extension opportunity: Custom command injection
+        
+    async def notification_handler(self, sender, data: bytearray):
+        """Handle incoming device notifications"""  
+        # Extension opportunity: Custom response processing
+```
+
+**Developer Extension Opportunities:**
+- **Custom BLE Services**: Add support for additional GATT services
+- **Direct Hardware Control**: Bypass high-level APIs for low-level control
+- **Protocol Debugging**: Implement packet capture and analysis tools
+- **Custom Authentication**: Implement alternative pairing mechanisms
+
+#### 2. MQTT/Cloud Communication Layer
+```python
+# Location: pymammotion/mqtt/mqtt.py
+class MammotionMQTT:
+    """Cloud communication via Alibaba IoT MQTT broker"""
+    
+    # Topic Structure for Extension:
+    TOPICS = {
+        'properties_post': f'/sys/{product_key}/{device_name}/thing/event/property/post',
+        'properties_set': f'/sys/{product_key}/{device_name}/thing/service/property/set',
+        'event_post': f'/sys/{product_key}/{device_name}/thing/event/{event}/post',
+        'service_call': f'/sys/{product_key}/{device_name}/thing/service/{service}/call'
+    }
+    
+    async def handle_thing_event(self, message: ThingEventMessage):
+        """Process cloud events"""
+        # Extension opportunity: Custom event handlers
+        
+    async def publish_custom_command(self, service: str, params: dict):
+        """Publish custom service calls"""
+        # Extension opportunity: New service implementations
+```
+
+**Developer Extension Opportunities:**
+- **Custom Cloud Services**: Implement new service endpoints
+- **Third-party Integration**: Bridge to other IoT platforms (AWS IoT, Azure IoT)
+- **Advanced Analytics**: Stream data to external analytics platforms
+- **Fleet Coordination**: Implement multi-device coordination protocols
+
+#### 3. HTTP REST API Layer
+```python
+# Location: pymammotion/http/http.py
+class MammotionHTTP:
+    """Authentication and configuration via REST API"""
+    
+    # Key endpoints for extension:
+    BASE_URL = "https://eu-central-1-iot-app.mammotion.com"
+    ENDPOINTS = {
+        'login': '/openapi/user/account/user-account/login',
+        'devices': '/openapi/device/list',
+        'binding': '/openapi/device/binding/openapi-device-binding/binding-iot-device',
+        'maps': '/openapi/device/area/list'
+    }
+    
+    async def call_custom_endpoint(self, endpoint: str, method: str, data: dict):
+        """Generic HTTP API caller for custom endpoints"""
+        # Extension opportunity: New API endpoint support
+```
+
+**Developer Extension Opportunities:**
+- **API Discovery**: Implement endpoint discovery and documentation
+- **Batch Operations**: Add bulk device management capabilities
+- **Custom Authentication**: Implement OAuth2 or custom auth schemes
+- **API Caching**: Add intelligent caching for performance optimization
+
+### Protocol Buffer Message System
+
+The library uses a sophisticated protobuf message hierarchy that developers can extend:
+
+#### Core Message Types
+```python
+# Location: pymammotion/proto/luba_msg.proto
+message LubaMsg {
+    MsgAttr msg_attr = 1;    // Message metadata
+    MsgCmdType cmd = 2;      // Command identifier  
+    MsgDevice device = 3;    // Device information
+    oneof sub_msg {
+        // Navigation subsystem
+        MctlNav nav = 11;
+        
+        // System control subsystem  
+        MctlSys sys = 12;
+        
+        // Driver control subsystem
+        MctlDriver driver = 13;
+        
+        // Multimedia subsystem
+        SocMul mul = 14;
+        
+        // Network management subsystem
+        DevNet net = 15;
+        
+        // OTA update subsystem
+        MctlOta ota = 16;
+        
+        // Base station communication
+        BaseStation base_station = 17;
+        
+        // Protocol extensions
+        MctlPept pept = 18;
+    }
+}
+```
+
+#### Message Creation and Extension Pattern
+```python
+# Location: pymammotion/mammotion/commands/abstract_message.py
+class AbstractMessage:
+    """Base class for all command message types"""
+    
+    def create_message(self, command: int, sub_cmd: int = 0) -> LubaMsg:
+        """Factory method for message creation"""
+        msg = LubaMsg()
+        msg.msg_attr.timestamp = int(time.time())
+        msg.cmd = command
+        msg.device.name = self.get_device_name()
+        return msg
+    
+    def send_command_with_callback(self, msg: LubaMsg, 
+                                 callback: Callable = None) -> bytes:
+        """Send command with optional response callback"""
+        # Extension opportunity: Custom response handling
+```
+
+**Protocol Extension Patterns:**
+
+1. **Custom Command Categories**
+```python
+# Example: Adding weather control commands
+class MessageWeather(AbstractMessage):
+    """Weather-related commands"""
+    
+    def get_weather_data(self) -> bytes:
+        """Request current weather information"""
+        msg = self.create_message(MsgCmdType.MSG_CMD_SYS_CTRL, 0x20)
+        # Add weather-specific payload
+        return betterproto.lib.util.to_bytes(msg)
+    
+    def set_weather_schedule(self, conditions: WeatherConditions) -> bytes:
+        """Configure weather-based scheduling"""
+        msg = self.create_message(MsgCmdType.MSG_CMD_NAV_CTRL, 0x21)
+        # Add scheduling payload
+        return betterproto.lib.util.to_bytes(msg)
+```
+
+2. **Custom Device Types**
+```python
+# Example: Adding support for new robot models
+class YukaPlusDevice(MammotionBaseDevice):
+    """Extended support for Yuka Plus model"""
+    
+    def __init__(self, state_manager: StateManager, cloud_device: Device):
+        super().__init__(state_manager, cloud_device)
+        self.model_specific_features = {
+            'edge_cutting': True,
+            'rtk_precision': 'cm_level',
+            'video_resolution': '4K'
+        }
+    
+    async def handle_model_specific_response(self, response: LubaMsg):
+        """Handle Yuka Plus specific responses"""
+        # Custom response processing
+```
+
+### State Management System
+
+The state management system provides comprehensive device state tracking with extension points:
+
+#### Core State Manager
+```python
+# Location: pymammotion/data/state_manager.py
+class StateManager:
+    """Centralized state management for mowing devices"""
+    
+    def __init__(self, device: MowingDevice):
+        self._device = device
+        self.preference = ConnectionPreference.WIFI
+        
+        # Extension points for custom state handlers
+        self.cloud_gethash_ack_callback = None
+        self.cloud_get_commondata_ack_callback = None
+        self.custom_state_handlers: Dict[str, Callable] = {}
+    
+    def register_custom_handler(self, state_type: str, handler: Callable):
+        """Register custom state change handlers"""
+        self.custom_state_handlers[state_type] = handler
+    
+    async def handle_nav_get_hash_list_ack(self, msg: NavGetHashListAck):
+        """Process navigation hash list responses"""
+        # Standard processing + custom handlers
+        if 'nav_hash' in self.custom_state_handlers:
+            await self.custom_state_handlers['nav_hash'](msg)
+```
+
+**State Extension Patterns:**
+
+1. **Custom Data Models**
+```python
+# Example: Adding environmental monitoring
+@dataclass
+class EnvironmentalData:
+    temperature: float
+    humidity: float
+    uv_index: int
+    soil_moisture: float
+    
+class ExtendedMowingDevice(MowingDevice):
+    """Extended device model with environmental data"""
+    
+    def __init__(self):
+        super().__init__()
+        self.environmental_data = EnvironmentalData()
+        self.custom_sensors: Dict[str, Any] = {}
+    
+    def update_environmental_state(self, sensor_data: dict):
+        """Update environmental sensor readings"""
+        # Custom state update logic
+```
+
+2. **Event System Extensions**
+```python
+# Location: pymammotion/event/event.py
+class CustomDataEvent(DataEvent):
+    """Extended event for custom data types"""
+    
+    def __init__(self, event_type: str, data: Any, metadata: dict = None):
+        super().__init__(event_type, data)
+        self.metadata = metadata or {}
+        
+    def to_cloud_event(self) -> dict:
+        """Convert to cloud event format for external systems"""
+        return {
+            'type': self.event_type,
+            'data': self.data,
+            'metadata': self.metadata,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+```
+
+### Advanced Device Control Patterns
+
+#### Movement and Navigation Extensions
+```python
+# Location: pymammotion/mammotion/commands/messages/navigation.py
+class MessageNavigation(AbstractMessage):
+    """Navigation command extensions"""
+    
+    def send_movement(self, linear_speed: int, angular_speed: int) -> bytes:
+        """Base movement command - extendable"""
+        # Core implementation
+        
+    def create_custom_path(self, waypoints: List[Tuple[float, float]]) -> bytes:
+        """Create custom navigation path"""
+        msg = self.create_message(MsgCmdType.MSG_CMD_NAV_CTRL, 0x30)
+        # Add waypoint data to message
+        return betterproto.lib.util.to_bytes(msg)
+    
+    def set_precision_mode(self, precision_level: int) -> bytes:
+        """Set navigation precision for RTK/GPS"""
+        msg = self.create_message(MsgCmdType.MSG_CMD_NAV_CTRL, 0x31)
+        # Add precision configuration
+        return betterproto.lib.util.to_bytes(msg)
+```
+
+#### Video and Multimedia Extensions
+```python
+# Location: pymammotion/mammotion/commands/messages/video.py  
+class MessageVideo(AbstractMessage):
+    """Video streaming and multimedia extensions"""
+    
+    def start_custom_stream(self, resolution: str, 
+                          codec: str, callback: Callable) -> bytes:
+        """Start custom video stream with specific parameters"""
+        msg = self.create_message(MsgCmdType.MSG_CMD_SOC_MUL, 0x40)
+        # Configure stream parameters
+        return betterproto.lib.util.to_bytes(msg)
+    
+    def enable_ai_detection(self, detection_types: List[str]) -> bytes:
+        """Enable AI-based object detection during streaming"""
+        msg = self.create_message(MsgCmdType.MSG_CMD_SOC_MUL, 0x41)
+        # Configure AI detection parameters
+        return betterproto.lib.util.to_bytes(msg)
+```
+
+## Integration Patterns and Examples
+
+### Home Assistant Integration Extensions
+
+```python
+# Example: Custom Home Assistant entities
+class MammotionWeatherEntity(Entity):
+    """Custom weather-aware scheduling entity"""
+    
+    def __init__(self, device: MammotionBaseDevice):
+        self._device = device
+        self._weather_api = WeatherAPI()
+    
+    @property 
+    def state(self):
+        """Return current weather-influenced schedule status"""
+        weather = self._weather_api.get_current()
+        if weather.precipitation > 0.5:
+            return "delayed_rain"
+        elif weather.temperature > 35:
+            return "delayed_heat"
+        else:
+            return "scheduled"
+    
+    async def async_update(self):
+        """Update entity state with weather considerations"""
+        # Custom update logic combining device and weather data
+```
+
+### Third-Party Service Integration
+
+```python
+# Example: Zapier/IFTTT webhook integration
+class MammotionWebhookHandler:
+    """Handle external service webhooks"""
+    
+    def __init__(self, device_manager: DeviceManager):
+        self.device_manager = device_manager
+        
+    async def handle_weather_alert(self, webhook_data: dict):
+        """Handle weather service alerts"""
+        if webhook_data['alert_type'] == 'severe_weather':
+            # Send all devices to base station
+            for device in self.device_manager.devices:
+                await device.return_to_base()
+                
+    async def handle_security_trigger(self, webhook_data: dict):
+        """Handle security system triggers"""  
+        if webhook_data['trigger'] == 'motion_detected':
+            # Enable video recording on all devices
+            for device in self.device_manager.devices:
+                await device.start_security_recording()
+```
+
+### Custom Analytics and Monitoring
+
+```python
+# Example: Performance analytics extension
+class MammotionAnalytics:
+    """Advanced analytics and monitoring"""
+    
+    def __init__(self, device: MammotionBaseDevice):
+        self.device = device
+        self.metrics_db = InfluxDBClient()
+        self.ml_model = MLModel('grass_growth_prediction')
+    
+    async def log_performance_metrics(self):
+        """Log detailed performance metrics"""
+        battery_efficiency = await self.calculate_battery_efficiency()
+        coverage_accuracy = await self.calculate_coverage_accuracy()
+        
+        metrics = {
+            'battery_efficiency': battery_efficiency,
+            'coverage_accuracy': coverage_accuracy, 
+            'grass_growth_rate': self.ml_model.predict_growth_rate(),
+            'optimal_schedule': self.ml_model.suggest_schedule()
+        }
+        
+        await self.metrics_db.write_points(metrics)
+    
+    async def generate_insights(self) -> Dict[str, Any]:
+        """Generate AI-powered insights"""
+        historical_data = await self.metrics_db.query_historical()
+        return self.ml_model.generate_insights(historical_data)
+```
+
+## Development Tools and Debugging
+
+### Protocol Analysis Tools
+
+```python
+# Example: Protocol debugging utilities
+class ProtocolAnalyzer:
+    """Analyze and debug protocol communications"""
+    
+    def __init__(self):
+        self.capture_enabled = False
+        self.message_log: List[Tuple[datetime, str, LubaMsg]] = []
+    
+    def capture_message(self, direction: str, msg: LubaMsg):
+        """Capture message for analysis"""
+        if self.capture_enabled:
+            self.message_log.append((datetime.now(), direction, msg))
+    
+    def analyze_message_patterns(self) -> Dict[str, Any]:
+        """Analyze communication patterns"""
+        patterns = {
+            'command_frequency': self._analyze_command_frequency(),
+            'response_times': self._analyze_response_times(),
+            'error_patterns': self._analyze_error_patterns(),
+            'message_sizes': self._analyze_message_sizes()
+        }
+        return patterns
+    
+    def export_wireshark_format(self, filename: str):
+        """Export captured messages in Wireshark-compatible format"""
+        # Convert protobuf messages to pcap format
+```
+
+### Testing Framework Extensions
+
+```python
+# Example: Hardware-in-the-loop testing
+class MammotionSimulator:
+    """Simulate robot responses for testing"""
+    
+    def __init__(self):
+        self.device_state = SimulatedDeviceState()
+        self.movement_physics = MovementSimulator()
+        self.battery_model = BatterySimulator()
+    
+    async def simulate_mowing_session(self, duration: int) -> SimulationResults:
+        """Simulate a complete mowing session"""
+        results = SimulationResults()
+        
+        for minute in range(duration):
+            # Simulate battery drain
+            self.battery_model.drain(self.calculate_current_draw())
+            
+            # Simulate movement and grass cutting
+            area_covered = self.movement_physics.calculate_coverage()
+            results.total_area += area_covered
+            
+            # Simulate potential issues
+            if self.should_simulate_issue():
+                issue = self.generate_random_issue()
+                results.issues.append(issue)
+        
+        return results
+
+class IntegrationTestSuite:
+    """Comprehensive integration testing"""
+    
+    async def test_multi_device_coordination(self):
+        """Test coordination between multiple devices"""
+        devices = await self.create_test_fleet(3)
+        
+        # Test fleet coordination scenarios
+        await self.test_boundary_overlap_handling(devices)
+        await self.test_charging_queue_management(devices) 
+        await self.test_weather_response_coordination(devices)
+    
+    async def test_protocol_robustness(self):
+        """Test protocol error handling and recovery"""
+        # Test message corruption scenarios
+        # Test network interruption scenarios  
+        # Test device disconnection scenarios
+```
+
+### Performance Optimization Guidelines
+
+#### Memory Management
+```python
+# Example: Efficient state management for large fleets
+class OptimizedStateManager:
+    """Memory-efficient state management for large deployments"""
+    
+    def __init__(self, max_devices: int = 100):
+        self.device_states: Dict[str, MowingDevice] = {}
+        self.lru_cache = LRUCache(max_devices)
+        self.compression_enabled = True
+    
+    def get_device_state(self, device_id: str) -> MowingDevice:
+        """Get device state with LRU caching"""
+        if device_id in self.lru_cache:
+            return self.lru_cache[device_id]
+        
+        # Load from persistent storage if needed
+        device_state = self.load_from_storage(device_id)
+        self.lru_cache[device_id] = device_state
+        return device_state
+    
+    def compress_historical_data(self, device_id: str):
+        """Compress old historical data to save memory"""
+        if self.compression_enabled:
+            device = self.device_states[device_id]
+            device.compress_old_data(retention_days=30)
+```
+
+#### Network Optimization
+```python
+# Example: Connection pool management
+class OptimizedConnectionManager:
+    """Manage connections efficiently for large deployments"""
+    
+    def __init__(self):
+        self.ble_pool = BLEConnectionPool(max_connections=10)
+        self.mqtt_pool = MQTTConnectionPool(max_connections=50)
+        self.http_session = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(limit=100),
+            timeout=aiohttp.ClientTimeout(total=30)
+        )
+    
+    async def send_batch_commands(self, commands: List[Tuple[str, bytes]]):
+        """Send multiple commands efficiently"""
+        # Group commands by device and connection type
+        grouped_commands = self.group_commands_by_connection(commands)
+        
+        # Execute in parallel with connection pooling
+        tasks = []
+        for connection_type, device_commands in grouped_commands.items():
+            task = self.execute_command_batch(connection_type, device_commands)
+            tasks.append(task)
+        
+        await asyncio.gather(*tasks)
+```
+
+## Advanced Extension Scenarios
+
+### Machine Learning Integration
+
+```python
+# Example: Grass growth prediction and optimization
+class GrassGrowthPredictor:
+    """ML-based grass growth prediction and schedule optimization"""
+    
+    def __init__(self):
+        self.model = self.load_pretrained_model()
+        self.weather_service = WeatherService()
+        self.soil_sensors = SoilSensorNetwork()
+    
+    async def predict_optimal_schedule(self, device: MammotionBaseDevice) -> Schedule:
+        """Predict optimal mowing schedule based on multiple factors"""
+        
+        # Gather input features
+        weather_forecast = await self.weather_service.get_forecast(7)
+        soil_data = await self.soil_sensors.get_readings()
+        historical_growth = await self.get_historical_growth_data()
+        
+        features = self.prepare_features({
+            'weather': weather_forecast,
+            'soil': soil_data,
+            'history': historical_growth,
+            'season': datetime.now().month
+        })
+        
+        # Generate prediction
+        predicted_schedule = self.model.predict(features)
+        
+        # Convert to device commands
+        return self.convert_to_schedule(predicted_schedule)
+
+class ComputerVisionAnalyzer:
+    """Analyze video feed for lawn health and obstacles"""
+    
+    def __init__(self):
+        self.object_detector = YOLOv8('lawn_objects.pt')
+        self.health_classifier = CustomCNN('grass_health.pt')
+        
+    async def analyze_frame(self, frame: np.ndarray) -> AnalysisResult:
+        """Analyze single video frame"""
+        
+        # Detect objects and obstacles
+        objects = self.object_detector(frame)
+        
+        # Analyze grass health in different regions
+        health_scores = []
+        for region in self.divide_into_regions(frame):
+            health_score = self.health_classifier(region)
+            health_scores.append(health_score)
+        
+        return AnalysisResult(
+            objects=objects,
+            average_health=np.mean(health_scores),
+            recommendations=self.generate_recommendations(objects, health_scores)
+        )
+```
+
+### IoT Platform Integration
+
+```python
+# Example: AWS IoT Core integration
+class AWSIoTIntegration:
+    """Integrate with AWS IoT Core for enterprise deployments"""
+    
+    def __init__(self, thing_name: str, cert_path: str, key_path: str):
+        self.thing_name = thing_name
+        self.iot_client = AWSIoTClient(cert_path, key_path)
+        self.shadow_client = DeviceShadowClient()
+        
+    async def sync_device_shadow(self, device: MammotionBaseDevice):
+        """Sync device state with AWS IoT Device Shadow"""
+        
+        # Get current device state
+        current_state = await device.get_state()
+        
+        # Update device shadow
+        shadow_document = {
+            'state': {
+                'reported': {
+                    'battery': current_state.battery_percentage,
+                    'status': current_state.status,
+                    'location': current_state.gps_location,
+                    'lastUpdate': datetime.utcnow().isoformat()
+                }
+            }
+        }
+        
+        await self.shadow_client.update_shadow(self.thing_name, shadow_document)
+    
+    async def handle_shadow_delta(self, delta: dict):
+        """Handle desired state changes from AWS IoT"""
+        
+        if 'desired_schedule' in delta:
+            new_schedule = delta['desired_schedule']
+            await self.update_device_schedule(new_schedule)
+        
+        if 'desired_mode' in delta:
+            new_mode = delta['desired_mode']  
+            await self.change_device_mode(new_mode)
+```
+
+This comprehensive developer extension guide provides the technical depth and practical examples needed for developers to understand and extend the PyMammotion library's capabilities to their fullest potential.
+
 ## Development Priorities
 
 ### Phase 1: Foundation Strengthening
