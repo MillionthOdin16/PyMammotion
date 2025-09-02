@@ -3384,7 +3384,437 @@ class PerformanceOptimizer:
 ```
 
 This comprehensive documentation now covers all available information from the robot and messages, providing developers with complete technical details for implementing additional features and achieving maximum capabilities with the PyMammotion library.
+
+## Advanced Robot Extension Capabilities
+
+This section provides detailed technical documentation for developers interested in extending the robot's capabilities through map management, cutting parameters, mowing modes, patterns, and custom navigation features. All capabilities documented here are verified as implementable through the available protocol buffer messages and API endpoints.
+
+### Map Management and Area Control
+
+#### Boundary and Zone Management
+The robot supports comprehensive map management through the navigation protocol (`MctlNav`):
+
+**Boundary Drawing Operations**:
+```python
+# Available boundary management commands
+start_draw_border()           # Begin boundary recording
+end_draw_border(type)         # Complete boundary with type (0=main, 1=obstacle, 2=channel)
+start_erase()                 # Enter boundary editing mode
+end_erase()                   # Complete boundary modifications
+cancel_current_record()       # Cancel active recording session
 ```
+
+**Multi-Zone Area Management**:
+- **Zone Hash System**: Each work area is identified by a unique 64-bit hash (`fixed64 hash`)
+- **Area Synchronization**: `synchronize_hash_data(hash_num)` for real-time zone updates
+- **Zone Selection**: Pass multiple `zone_hashs` to `NavPlanJobSet` for multi-area jobs
+- **Area Naming**: `set_area_name(device_id, hash_id, name)` for custom zone labels
+
+**Obstacle and Channel Line Management**:
+```python
+# Obstacle management
+start_draw_barrier()          # Begin obstacle recording
+delete_map_elements(type, hash_num)  # Remove specific elements (type: 0=boundary, 1=obstacle, 2=channel)
+
+# Channel line creation for custom navigation paths
+start_channel_line()          # Begin channel line recording
+# Channel lines enable custom navigation corridors between zones
 ```
+
+#### Advanced Map Data Structures
+**Regional Data Access** (`RegionData` class):
+- `action`: Operation type (0=get, 1=set, 6=delete, 8=sync)
+- `type`: Data type (0=boundary, 1=obstacle, 2=channel, 3=transfer_area)
+- `hash`: Unique identifier for map element
+- `total_frame`/`current_frame`: Support for large map data pagination
+
+**Grass Collection Points**:
+```python
+# Dedicated grass collection management
+enter_dumping_status()        # Enable grass collection mode
+add_dump_point()              # Mark collection locations
+revoke_dump_point()           # Remove collection points
+out_drop_dumping_add()        # External collection point marking
+recover_dumping()             # Restore collection operations
 ```
+
+### Cutting Parameters and Blade Control
+
+#### Blade Height Management
+Precision blade control through `DrvKnifeHeight` message:
+```python
+set_blade_height(height: int)  # Height in millimeters (typically 20-70mm range)
+```
+
+**Real-time Height Monitoring**:
+- `DrvKnifeChangeReport`: Provides start_height, end_height, cur_height during adjustments
+- `DrvKnifeStatus`: Reports current blade operational status
+
+#### Cutting Speed Control
+**Variable Speed Settings**:
+```python
+set_speed(speed: float)       # Speed as percentage (0.0-1.0)
+get_speed()                   # Query current speed setting
+```
+
+**Manual Cutting Operations**:
+```python
+operate_on_device(
+    main_ctrl=1,              # Main system enable (0=off, 1=on)
+    cut_knife_ctrl=1,         # Blade control (0=off, 1=on)
+    cut_knife_height=35,      # Target height in mm
+    max_run_speed=0.5         # Maximum operational speed
+)
+```
+
+#### Advanced Cutting Modes
+**Cutter Work Mode Optimization** (`CutterWorkMode` enum):
+- `CUTTER_STANDARD = 0`: Balanced performance and battery life
+- `CUTTER_ECONOMIC = 1`: Extended battery life, reduced cutting power
+- `CUTTER_PERFORMANCE = 2`: Maximum cutting power for thick grass
+
+**RPM Monitoring**:
+- `AppGetCutterWorkMode`: Returns current mode and RPM values
+- `rpt_cutter_rpm`: Real-time RPM reporting during operation
+
+### Comprehensive Mowing Modes and Patterns
+
+#### Grid Cutting Patterns (`CuttingMode`)
+```python
+class CuttingMode(IntEnum):
+    single_grid = 0     # Standard parallel lines
+    double_grid = 1     # Perpendicular crosshatch pattern
+    segment_grid = 2    # Area divided into segments
+    no_grid = 3         # Perimeter-only cutting
+```
+
+#### Border Management Patterns (`BorderPatrolMode`)
+Configurable border cutting passes (0-4 laps around perimeter):
+- Enhanced edge cutting for thorough coverage
+- Customizable based on grass growth patterns
+- Automatically adjusts for area complexity
+
+#### Obstacle Navigation Modes (`ObstacleLapsMode`)
+Intelligent obstacle handling with configurable lap counts:
+- Precision cutting around landscaping features
+- Adaptive detection based on obstacle complexity
+- Integration with ultrasonic sensor settings
+
+#### Advanced Path Planning
+**Mowing Order Control** (`MowOrder`):
+- `border_first = 0`: Complete perimeter before internal areas
+- `grid_first = 1`: Fill internal areas before perimeter cleanup
+
+**Traversal Optimization** (`TraversalMode`):
+- `direct = 0`: Straight-line transitions between areas
+- `follow_perimeter = 1`: Navigate along boundaries for safety
+
+**Corner Handling** (`TurningMode`):
+- `zero_turn = 0`: Pivot turning for tight spaces
+- `multipoint = 1`: Wider turning radius for efficiency
+
+### Ultrasonic Detection and Obstacle Avoidance
+
+#### Detection Strategy Configuration (`DetectionStrategy`)
+```python
+class DetectionStrategy(IntEnum):
+    direct_touch = 0    # Contact-based detection
+    slow_touch = 1      # Reduced speed on approach  
+    less_touch = 2      # Minimal contact detection
+    no_touch = 10       # Ultrasonic-only (Luba 2/Yuka)
+    sensitive = 11      # High sensitivity mode (X series)
+```
+
+**Implementation Example**:
+```python
+# Configure detection for thick vegetation
+route_info = GenerateRouteInformation(
+    ultra_wave=DetectionStrategy.less_touch,  # Gentle obstacle handling
+    speed=0.2,                                # Reduced speed for precision
+    channel_width=20                          # Narrower cutting paths
+)
+```
+
+### Advanced Route Generation and Path Planning
+
+#### Comprehensive Route Configuration
+**Path Angle Control** (`PathAngleSetting`):
+- `relative_angle = 0`: Angles relative to area boundaries
+- `absolute_angle = 1`: Fixed compass-based angles  
+- `random_angle = 2`: Randomized patterns (Luba Pro/Luba 2 Yuka)
+
+**Route Generation Parameters**:
+```python
+class GenerateRouteInformation:
+    one_hashs: list[int]        # Target zone hash identifiers
+    job_mode: int               # CuttingMode selection
+    speed: float                # Operational speed (0.1-1.0)
+    ultra_wave: int             # DetectionStrategy setting
+    channel_mode: int           # Grid pattern type
+    channel_width: int          # Path spacing in centimeters (15-50cm typical)
+    blade_height: int           # Cutting height in millimeters
+    toward: int                 # Path angle in degrees (0-359)
+    toward_included_angle: int  # Angle variance for random patterns
+    toward_mode: int            # PathAngleSetting type
+    edge_mode: int             # BorderPatrolMode laps
+    obstacle_laps: int         # ObstacleLapsMode setting
+```
+
+#### Custom Navigation Capabilities
+
+**Breakpoint Navigation**:
+```python
+break_point_continue()              # Resume from last known position
+break_point_anywhere_continue()     # Resume from current location
+```
+
+**Manual Position Control**:
+```python
+# Direct movement commands for custom navigation
+send_movement(linear_speed: int, angular_speed: int)
+# linear_speed: -100 to +100 (backward/forward)  
+# angular_speed: -100 to +100 (left/right)
+```
+
+**Area Transfer Management**:
+```python
+get_area_to_be_transferred()        # Query zones requiring navigation
+# Enables custom inter-zone routing strategies
+```
+
+### Job Scheduling and Execution Control
+
+#### Advanced Scheduling Features
+**Plan Configuration** (`NavPlanJobSet` message):
+```python
+# Comprehensive job scheduling parameters
+plan_data = Plan(
+    area=calculated_area,           # Work area in square meters
+    work_time=estimated_duration,   # Expected completion time
+    knife_height=blade_setting,     # Cutting height
+    route_angle=path_direction,     # Primary cutting direction
+    route_spacing=channel_width,    # Path separation distance
+    ultrasonic_barrier=detection_mode,  # Obstacle detection setting
+    speed=operational_speed,        # Movement speed
+    zone_hashs=target_areas,        # Selected work zones
+    toward_included_angle=angle_variance,  # Pattern randomization
+    toward_mode=angle_type          # Angle calculation method
+)
+```
+
+**Time-based Restrictions**:
+```python
+set_plan_unable_time(
+    sub_cmd=1,
+    device_id=robot_id, 
+    unable_start_time="22:00",      # Evening restriction start
+    unable_end_time="06:00"         # Morning restriction end
+)
+```
+
+### Weather and Environmental Integration
+
+#### Rain Tactics Configuration
+Available through `GenerateRouteInformation.rain_tactics`:
+- Automatic job suspension during precipitation
+- Resume strategies for optimal grass conditions
+- Integration with weather service APIs for predictive scheduling
+
+#### Seasonal Adaptation Patterns
+**Grass Growth Optimization**:
+```python
+# Adjust cutting parameters based on growing season
+summer_config = GenerateRouteInformation(
+    blade_height=45,            # Higher cut for heat stress
+    channel_width=30,           # Wider paths for efficiency
+    speed=0.4                   # Faster operation
+)
+
+spring_config = GenerateRouteInformation(
+    blade_height=25,            # Lower cut for dense growth
+    channel_width=20,           # Narrower paths for precision
+    speed=0.2                   # Slower for thorough cutting
+)
+```
+
+### Real-time Monitoring and Data Collection
+
+#### Position and Navigation Tracking
+**GPS/RTK Data Structures**:
+```python
+# NavPosUp message provides:
+class PositionData:
+    x: float                # Local coordinate X
+    y: float                # Local coordinate Y  
+    status: int             # Fix quality (0-5)
+    toward: int             # Heading in degrees
+    stars: int              # Satellite count
+    age: float              # Fix age in seconds
+    lat_stddev: float       # Latitude precision
+    lon_stddev: float       # Longitude precision
+    pos_type: int           # Position solution type
+    pos_level: int          # Precision level
+```
+
+#### Work Progress Monitoring
+**Real-time Job Statistics** (`WorkReportInfoAck`):
+- `work_progress`: Completion percentage (0-100)
+- `work_ares`: Area completed in square meters
+- `work_time_used`: Elapsed working time
+- `height_of_knife`: Current blade setting
+- `work_type`: Active cutting mode
+- `work_result`: Job outcome status
+
+### Error Handling and Recovery Strategies
+
+#### Navigation Error Recovery
+**Automated Recovery Actions**:
+```python
+# Available recovery commands based on error type
+fast_aotu_test(action_code)         # Automated system recovery
+reset_base_station()                # RTK base station reset
+confirm_base_station()              # Base station validation
+delete_charge_point()               # Charging station reset
+```
+
+#### Custom Error Handling Patterns
+**Error Code Processing**: 
+- Monitor `SysDevErrCode` messages for system status
+- Implement custom recovery logic based on error categories
+- Log error patterns for predictive maintenance
+
+### Custom Feature Implementation Examples
+
+#### Smart Zone Prioritization
+```python
+def implement_smart_zone_scheduling(zone_data: list, weather_forecast: dict):
+    """Prioritize zones based on grass growth and weather conditions."""
+    
+    # Sort zones by growth rate and weather impact
+    priority_zones = []
+    for zone in zone_data:
+        growth_factor = calculate_growth_rate(zone.hash, weather_forecast)
+        if growth_factor > 0.7:  # High growth areas first
+            priority_zones.insert(0, zone.hash)
+        else:
+            priority_zones.append(zone.hash)
+    
+    # Generate route with prioritized zones
+    route_config = GenerateRouteInformation(
+        one_hashs=priority_zones,
+        job_mode=CuttingMode.double_grid,  # Thorough cutting for high-growth areas
+        channel_width=25,
+        speed=0.3
+    )
+    
+    return route_config
+```
+
+#### Adaptive Cutting Height System
+```python
+def implement_adaptive_cutting_height(grass_conditions: dict):
+    """Adjust blade height based on grass thickness and weather."""
+    
+    base_height = 30  # Default height in mm
+    
+    # Adjust for grass thickness
+    if grass_conditions['thickness'] > 0.8:
+        base_height += 10  # Raise blade for thick grass
+    
+    # Adjust for moisture content
+    if grass_conditions['moisture'] > 0.6:
+        base_height += 5   # Raise blade for wet conditions
+    
+    # Adjust for temperature
+    if grass_conditions['temperature'] > 30:  # Hot weather
+        base_height += 8   # Higher cut reduces stress
+    
+    return min(base_height, 70)  # Cap at maximum height
+```
+
+#### Custom Pattern Generation
+```python
+def generate_custom_mowing_pattern(area_complexity: float, obstacle_density: float):
+    """Create optimized mowing pattern based on area characteristics."""
+    
+    if obstacle_density > 0.7:  # High obstacle density
+        return GenerateRouteInformation(
+            job_mode=CuttingMode.no_grid,           # Perimeter only
+            edge_mode=BorderPatrolMode.two,         # Extra border passes
+            obstacle_laps=ObstacleLapsMode.three,   # Thorough obstacle cutting
+            ultra_wave=DetectionStrategy.sensitive,  # High detection sensitivity
+            speed=0.15                              # Slow and careful
+        )
+    elif area_complexity < 0.3:  # Simple, open area
+        return GenerateRouteInformation(
+            job_mode=CuttingMode.single_grid,       # Efficient straight lines
+            channel_width=35,                       # Wide cutting paths
+            speed=0.5,                              # Fast operation
+            toward_mode=PathAngleSetting.random_angle  # Vary patterns
+        )
+    else:  # Balanced approach
+        return GenerateRouteInformation(
+            job_mode=CuttingMode.double_grid,       # Thorough coverage
+            channel_width=25,                       # Standard spacing
+            speed=0.3,                              # Balanced speed
+            edge_mode=BorderPatrolMode.one          # Single border pass
+        )
+```
+
+### Integration with External Systems
+
+#### Home Assistant Advanced Automations
+```python
+def create_weather_aware_mowing_schedule(weather_api, robot_controller):
+    """Implement intelligent scheduling based on weather conditions."""
+    
+    forecast = weather_api.get_5_day_forecast()
+    
+    for day in forecast:
+        if day.precipitation_chance < 0.2 and day.wind_speed < 15:
+            # Good mowing conditions
+            cutting_mode = CuttingMode.double_grid
+            speed = 0.4
+        elif day.precipitation_chance < 0.5:
+            # Marginal conditions
+            cutting_mode = CuttingMode.single_grid
+            speed = 0.2
+        else:
+            # Skip mowing
+            continue
+        
+        # Schedule job with weather-appropriate settings
+        job_config = GenerateRouteInformation(
+            job_mode=cutting_mode,
+            speed=speed,
+            blade_height=calculate_weather_height(day)
+        )
+        
+        robot_controller.schedule_job(day.date, job_config)
+```
+
+#### Fleet Management Capabilities
+```python
+def coordinate_multi_robot_zones(robots: list, total_area_hashs: list):
+    """Distribute work zones among multiple robots for efficiency."""
+    
+    zones_per_robot = len(total_area_hashs) // len(robots)
+    
+    for i, robot in enumerate(robots):
+        start_idx = i * zones_per_robot
+        end_idx = start_idx + zones_per_robot
+        robot_zones = total_area_hashs[start_idx:end_idx]
+        
+        # Configure each robot with its assigned zones
+        route_config = GenerateRouteInformation(
+            one_hashs=robot_zones,
+            job_mode=CuttingMode.single_grid,
+            channel_width=30,
+            speed=0.35
+        )
+        
+        robot.generate_route_information(route_config)
+```
+
+This comprehensive extension documentation provides developers with complete technical details for implementing advanced robot capabilities using verified protocol buffer messages and API endpoints available in the PyMammotion library.
 - **CoordinateConverter**: Geographic coordinate transformations
